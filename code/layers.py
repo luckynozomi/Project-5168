@@ -17,13 +17,9 @@ from theano.sandbox.rng_mrg import MRG_RandomStreams as RandomStreams
 
 from logistic_sgd import LogisticRegression
 
-try:
-    import theano.tensor.nnet.relu as relu
-except ImportError:
-    print "No theano.tensor.nnet.relu found, using self-defined version"
-    def relu(x):
-        return T.switch(x>0, x, 0)
 
+def relu(x):
+    return 0.5 * (x + abs(x))
 
 gpu_usage = True
 
@@ -36,7 +32,7 @@ except ImportError:
 
 class FCLayer(object):
     def __init__(self, rng, data, n_in, n_out,
-                 W=None, b=None, activation=T.tanh):
+                 W=None, b=None, activation=T.nnet.sigmoid):
         """
         A fully connected layer in the neural network.
         Weight matrix W is of shape (n_in,n_out)
@@ -57,6 +53,12 @@ class FCLayer(object):
         :type activation: theano.Op or function
         :param activation: Non linearity to be applied in the hidden
                            layer
+
+        :type W: theano.config.floatX
+        :param W: the initial weights, of shape (n_in, n_out)
+
+        :type b: theano.config.floatX
+        :param b: the initial bias, of shape(n_out,)
         """
         self.input = data
         # end-snippet-1
@@ -149,7 +151,7 @@ class DropoutLayer(object):
 
 class ConvLayer(object):
     def __init__(self, rng, data, image_shape, filter_shape,
-                 activation=T.tanh, pad='valid', strides=(1, 1)):
+                 activation=None, pad='valid', strides=(1, 1)):
         """
         Allocate a LeNetConvPoolLayer with shared variable internal parameters.
 
@@ -170,6 +172,8 @@ class ConvLayer(object):
         :type activation: theano.Op or function
         :param activation: Non linearity to be applied in the hidden
                            layer
+
+        :type pad:
 
         """
 
@@ -224,7 +228,12 @@ class ConvLayer(object):
         # thus be broadcasted across mini-batches and feature map
         # width & height
 
-        self.output = activation(conv_out + self.b.dimshuffle('x', 0, 'x', 'x'))
+        lin_output = conv_out + self.b.dimshuffle('x', 0, 'x', 'x')
+
+        self.output = (
+            lin_output if activation is None
+            else activation(lin_output)
+        )
 
         # store parameters of this layer
         self.params = [self.W, self.b]
@@ -234,7 +243,7 @@ class ConvLayer(object):
 
 class PoolLayer(object):
     def __init__(self, data,
-                 poolsize=(2, 2), stride=(2, 2), pad=(0, 0)):
+                 poolsize=(2, 2), stride=(2, 2), pad=(0, 0), activation=None):
         """
         Pooling Layer. Seems only max pooling works.
 
@@ -251,6 +260,9 @@ class PoolLayer(object):
         :param pad: # of extra pixels added on margins
         """
 
+        # TODO: stride = poolsize by default
+
+
         self.input = data
 
         pooled_out = downsample.max_pool_2d(
@@ -261,6 +273,11 @@ class PoolLayer(object):
             padding=pad
         )
 
+        self.output = (
+            pooled_out if activation is None
+            else activation(pooled_out)
+        )
+
         self.output = pooled_out
 
         self.params = []
@@ -268,48 +285,30 @@ class PoolLayer(object):
         #self.out_shape = pooled_out.shape.eval()
 
 
-def load_data(batch_numbers):
+def load_data(batch_number):
     """ This function loads the cifar-10 dataset
 
-    :type batch_numbers: char
-    :param batch_numbers: the number of batches to be loaded
+    :type batch_number: char
+    :param batch_number: the number of batches to be loaded
 
     """
 
     import cPickle
     import tarfile
 
-    input_file = '../data/cifar-10-python2.tar.gz'
+    input_file = '../data/cifar10.tar.gz'
 
     tar_file = tarfile.open(input_file, 'r:gz')
 
-    batch_numbers = numpy.asarray(batch_numbers, dtype='int32')
+    if batch_number == 6:
+        fo = tar_file.extractfile('test_batch')
+    else:
+        fo = tar_file.extractfile('data_batch_%d' % batch_number)
+    array = cPickle.load(fo)
+    fo.close()
 
-    train_batches = []
-
-    for batch in batch_numbers:
-        if batch == 6:
-            fo = tar_file.extractfile('test_batch')
-        else:
-            fo = tar_file.extractfile('data_batch_%d' % batch)
-        array = cPickle.load(fo)
-        train_batches.append(array)
-        fo.close()
-    try:
-        x = numpy.concatenate([batch[0] for batch in train_batches])
-    except:
-        x = numpy.concatenate([batch['data'] for batch in train_batches])
-
-    try:
-        y = numpy.concatenate(
-            [numpy.array(batch[1], dtype=numpy.uint8) for batch in train_batches]
-        )
-    except:
-        y = numpy.concatenate(
-            [numpy.array(batch['labels'], dtype=numpy.unit8) for batch in train_batches]
-        )
-
-    tar_file.close()
+    x = array[0]
+    y = numpy.array(array[1], dtype=numpy.uint8)
 
     print x.shape
 
@@ -321,7 +320,7 @@ def load_data(batch_numbers):
     return shared_x, T.cast(shared_y, 'int32')
 
 
-def evaluate_lenet5(n_epochs=200, nkerns=[16, 32, 32], batch_size=500):
+def evaluate_lenet5(n_epochs=200, nkerns=[16, 20, 20], batch_size=500):
     """ Demonstrates lenet on MNIST dataset
 
     :type learning_rate: float
@@ -340,9 +339,9 @@ def evaluate_lenet5(n_epochs=200, nkerns=[16, 32, 32], batch_size=500):
 
     rng = numpy.random.RandomState(23455)
 
-    train_set_x, train_set_y = load_data([1,2,3,4])
-    valid_set_x, valid_set_y = load_data([5])
-    test_set_x, test_set_y = load_data([6])
+    train_set_x, train_set_y = load_data(1)
+    valid_set_x, valid_set_y = load_data(5)
+    test_set_x, test_set_y = load_data(6)
 
     # compute number of minibatches for training, validation and testing
     n_train_batches = train_set_x.get_value(borrow=True).shape[0]
@@ -387,13 +386,15 @@ def evaluate_lenet5(n_epochs=200, nkerns=[16, 32, 32], batch_size=500):
         image_shape=(batch_size, 3, 32, 32),
         filter_shape=(nkerns[0], 3, 5, 5),
         pad='same',
-        activation=T.tanh
+        activation=relu
     )
 
     layers.append(layer0)
 
     layer1 = PoolLayer(
-        data=layer0.output
+        data=layer0.output,
+        stride=(2, 2),
+        poolsize=(2, 2)
     )
     layers.append(layer1)
 
@@ -407,12 +408,14 @@ def evaluate_lenet5(n_epochs=200, nkerns=[16, 32, 32], batch_size=500):
         image_shape=(batch_size, nkerns[0], 16, 16),
         filter_shape=(nkerns[1], nkerns[0], 5, 5),
         pad='same',
-        activation=T.tanh
+        activation=relu
     )
     layers.append(layer2)
 
     layer3 = PoolLayer(
-        data=layer2.output
+        data=layer2.output,
+        poolsize=(2, 2),
+        stride=(2, 2)
     )
     layers.append(layer3)
 
@@ -427,7 +430,7 @@ def evaluate_lenet5(n_epochs=200, nkerns=[16, 32, 32], batch_size=500):
         image_shape=(batch_size, nkerns[1], 8, 8),
         filter_shape=(nkerns[2], nkerns[1], 5, 5),
         pad='same',
-        activation=T.tanh
+        activation=relu
     )
     layers.append(layer4)
 
@@ -439,54 +442,37 @@ def evaluate_lenet5(n_epochs=200, nkerns=[16, 32, 32], batch_size=500):
     layer6_input = layer5.output.flatten(2)
 
     # construct a fully-connected sigmoidal layer
-    layer6 = DropoutLayer(
-        data=layer6_input,
-        n_in=nkerns[2] * 4 * 4,
-        srng=srng,
-        p=0.5,
-        train_flag=train_flag
-    )
-    layers.append(layer6)
-
-    layer7 = FCLayer(
-        rng,
-        data=layer6.output,
-        n_in=nkerns[2] * 4 * 4,
-        n_out=30,
-        activation=T.tanh
-    )
-    layers.append(layer7)
 
     # classify the values of the fully-connected sigmoidal layer
-    layer8 = LogisticRegression(input=layer7.output, n_in=30, n_out=10)
-    layers.append(layer8)
+    layer6 = LogisticRegression(input=layer6_input, n_in=nkerns[2] * 4 * 4, n_out=10)
+    layers.append(layer6)
 
     # the cost we minimize during training is the NLL of the model
-    cost = layer8.negative_log_likelihood(y)
+    cost = layer6.negative_log_likelihood(y)
 
     # create a function to compute the mistakes that are made by the model
     test_model = theano.function(
         [index],
-        layer8.errors(y),
+        layer6.errors(y),
         givens={
-            x: test_set_x[index * batch_size: (index + 1) * batch_size],
+            x: test_set_x[index * batch_size: (index + 1) * batch_size] / 255.,
             y: test_set_y[index * batch_size: (index + 1) * batch_size],
-            train_flag: numpy.cast['int8'](0)
+            # train_flag: numpy.cast['int8'](0)
         }
     )
 
     validate_model = theano.function(
         [index],
-        layer8.errors(y),
+        layer6.errors(y),
         givens={
-            x: valid_set_x[index * batch_size: (index + 1) * batch_size],
+            x: valid_set_x[index * batch_size: (index + 1) * batch_size] / 255.,
             y: valid_set_y[index * batch_size: (index + 1) * batch_size],
-            train_flag: numpy.cast['int8'](0)
+            # train_flag: numpy.cast['int8'](0)
         }
     )
 
     # create a list of all model parameters to be fit by gradient descent
-    params = layer8.params + layer7.params + layer6.params + \
+    params = layer6.params + \
         layer5.params + layer4.params + layer3.params + \
         layer2.params + layer1.params + layer0.params
 
@@ -523,9 +509,10 @@ def evaluate_lenet5(n_epochs=200, nkerns=[16, 32, 32], batch_size=500):
         cost,
         updates=updates,
         givens={
-            x: train_set_x[index * batch_size: (index + 1) * batch_size],
+            x: train_set_x[index * batch_size: (index + 1) * batch_size] / 255.,
+            # TODO: prescale the data
             y: train_set_y[index * batch_size: (index + 1) * batch_size],
-            train_flag: numpy.cast['int8'](1)
+            # train_flag: numpy.cast['int8'](1)
         }
     )
     # end-snippet-1
@@ -580,7 +567,7 @@ def evaluate_lenet5(n_epochs=200, nkerns=[16, 32, 32], batch_size=500):
                 this_validation_loss = numpy.mean(validation_losses)
                 print('epoch %i, minibatch %i/%i, validation error %f %%' %
                       (epoch, minibatch_index + 1, n_train_batches,
-                       this_validation_loss * 100.))
+                       100. * this_validation_loss))
 
                 # if we got the best validation score until now
                 if this_validation_loss < best_validation_loss:
@@ -605,6 +592,8 @@ def evaluate_lenet5(n_epochs=200, nkerns=[16, 32, 32], batch_size=500):
                           (epoch, minibatch_index + 1, n_train_batches,
                            test_score * 100.))
 
+                    # TODO: after each better result, save it to a file and have the option to load
+
             if patience <= iter:
                 done_looping = True
                 break
@@ -613,7 +602,7 @@ def evaluate_lenet5(n_epochs=200, nkerns=[16, 32, 32], batch_size=500):
     print('Optimization complete.')
     print('Best validation score of %f %% obtained at iteration %i, '
           'with test performance %f %%' %
-          (best_validation_loss * 100., best_iter + 1, test_score * 100.))
+          (100. * best_validation_loss, best_iter + 1, 100. * test_score))
     print >> sys.stderr, ('The code for file ' +
                           os.path.split(__file__)[1] +
                           ' ran for %.2fm' % ((end_time - start_time) / 60.))
@@ -621,14 +610,3 @@ def evaluate_lenet5(n_epochs=200, nkerns=[16, 32, 32], batch_size=500):
 if __name__ == '__main__':
     evaluate_lenet5()
 
-
-def experiment(state, channel):
-    evaluate_lenet5(state.learning_rate, dataset=state.dataset)
-
-
-
-
-
-
-# Main:
-# srng = RandomStreams(seed=seed)
