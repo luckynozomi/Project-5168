@@ -30,6 +30,38 @@ except ImportError:
     gpu_usage = False
 
 
+class ElasticLayer(object):
+    def __init__(self, srng, data, image_shape):
+        """
+
+        :param srng:
+
+        :type data: theano.tensor.dtensor4
+        :param data: symbolic image tensor, of shape image_shape
+
+        :type image_shape: tuple or list of length 4
+        :param image_shape: (batch size, num input feature maps,
+                             image height, image width)
+
+        :return:
+        """
+
+        p = srng.uniform(size=(1,), ndim=1)
+
+        # temp = T.switch(T.gt(p, .5), data, data[:, :, :, ::-1])
+
+        if T.gt(p, .5):
+            temp = data
+        else:
+            temp = data[:, :, :, ::-1]
+
+        self.output = temp
+
+        self.params = []
+
+
+
+
 class FCLayer(object):
     def __init__(self, rng, data, n_in, n_out,
                  W=None, b=None, activation=T.nnet.sigmoid):
@@ -296,7 +328,7 @@ def load_data(batch_number):
     import cPickle
     import tarfile
 
-    input_file = '../data/cifar10.tar.gz'
+    input_file = 'data/cifar10.tar.gz'
 
     tar_file = tarfile.open(input_file, 'r:gz')
 
@@ -307,7 +339,7 @@ def load_data(batch_number):
     array = cPickle.load(fo)
     fo.close()
 
-    x = array[0]
+    x = (array[0] / 255. - .5) * 2
     y = numpy.array(array[1], dtype=numpy.uint8)
 
     print x.shape
@@ -320,7 +352,7 @@ def load_data(batch_number):
     return shared_x, T.cast(shared_y, 'int32')
 
 
-def evaluate_lenet5(n_epochs=200, nkerns=[16, 20, 20], batch_size=500):
+def evaluate_lenet5(n_epochs=400, nkerns=[16, 20, 20], batch_size=500):
     """ Demonstrates lenet on MNIST dataset
 
     :type learning_rate: float
@@ -380,9 +412,15 @@ def evaluate_lenet5(n_epochs=200, nkerns=[16, 20, 20], batch_size=500):
     # maxpooling reduces this further to (24/2, 24/2) = (12, 12)
     # 4D output tensor is thus of shape (batch_size, nkerns[0], 12, 12)
 
+    layerx = ElasticLayer(
+        srng=srng,
+        data=layer0_input,
+        image_shape=(batch_size, 3, 32, 32)
+    )
+
     layer0 = ConvLayer(
         rng,
-        data=layer0_input,
+        data=layerx.output,
         image_shape=(batch_size, 3, 32, 32),
         filter_shape=(nkerns[0], 3, 5, 5),
         pad='same',
@@ -442,9 +480,16 @@ def evaluate_lenet5(n_epochs=200, nkerns=[16, 20, 20], batch_size=500):
     layer6_input = layer5.output.flatten(2)
 
     # construct a fully-connected sigmoidal layer
+    layer5d = DropoutLayer(
+        data=layer6_input,
+        n_in=nkerns[2] * 4 * 4,
+        srng=srng,
+        p=.5,
+        train_flag=train_flag
+    )
 
     # classify the values of the fully-connected sigmoidal layer
-    layer6 = LogisticRegression(input=layer6_input, n_in=nkerns[2] * 4 * 4, n_out=10)
+    layer6 = LogisticRegression(input=layer5d.output, n_in=nkerns[2] * 4 * 4, n_out=10)
     layers.append(layer6)
 
     # the cost we minimize during training is the NLL of the model
@@ -455,9 +500,9 @@ def evaluate_lenet5(n_epochs=200, nkerns=[16, 20, 20], batch_size=500):
         [index],
         layer6.errors(y),
         givens={
-            x: test_set_x[index * batch_size: (index + 1) * batch_size] / 255.,
+            x: test_set_x[index * batch_size: (index + 1) * batch_size],
             y: test_set_y[index * batch_size: (index + 1) * batch_size],
-            # train_flag: numpy.cast['int8'](0)
+            train_flag: numpy.cast['int8'](0)
         }
     )
 
@@ -465,9 +510,9 @@ def evaluate_lenet5(n_epochs=200, nkerns=[16, 20, 20], batch_size=500):
         [index],
         layer6.errors(y),
         givens={
-            x: valid_set_x[index * batch_size: (index + 1) * batch_size] / 255.,
+            x: valid_set_x[index * batch_size: (index + 1) * batch_size],
             y: valid_set_y[index * batch_size: (index + 1) * batch_size],
-            # train_flag: numpy.cast['int8'](0)
+            train_flag: numpy.cast['int8'](0)
         }
     )
 
@@ -509,10 +554,10 @@ def evaluate_lenet5(n_epochs=200, nkerns=[16, 20, 20], batch_size=500):
         cost,
         updates=updates,
         givens={
-            x: train_set_x[index * batch_size: (index + 1) * batch_size] / 255.,
+            x: train_set_x[index * batch_size: (index + 1) * batch_size],
             # TODO: prescale the data
             y: train_set_y[index * batch_size: (index + 1) * batch_size],
-            # train_flag: numpy.cast['int8'](1)
+            train_flag: numpy.cast['int8'](1)
         }
     )
     # end-snippet-1
