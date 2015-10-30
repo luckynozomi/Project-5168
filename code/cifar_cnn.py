@@ -10,12 +10,13 @@ import timeit
 
 from theano.sandbox.rng_mrg import MRG_RandomStreams as RandomStreams
 
-from logistic_sgd import LogisticRegression
 from layers import *
 from load_cifar import load_data
+import cPickle as pickle
 
 
-def evaluate_lenet5(n_epochs=600, nkerns=[16, 20, 20], batch_size=500):
+def evaluate_lenet5(n_epochs=1, nkerns=[128, 128, 128], batch_size=100,
+                    n_params=6, load_weight="fresh_model.pickle", save_weight="fresh_model.pickle"):
     """ Demonstrates lenet on MNIST dataset
 
     :type learning_rate: float
@@ -59,11 +60,20 @@ def evaluate_lenet5(n_epochs=600, nkerns=[16, 20, 20], batch_size=500):
     ######################
     print '... building the model'
 
-    layers = []
+    params = []
 
     srng = RandomStreams(25252)
 
     train_flag = T.bscalar('train_flag')
+
+    if load_weight is None:
+        load_weight = [None] * n_params
+    else:
+        f = open(os.path.join("model", load_weight), "rb")
+        load_weight = pickle.load(f)
+        f.close()
+
+    param_count = 0
 
     # Reshape matrix of rasterized images of shape (batch_size, 28 * 28)
     # to a 4D tensor, compatible with our LeNetConvPoolLayer
@@ -81,6 +91,8 @@ def evaluate_lenet5(n_epochs=600, nkerns=[16, 20, 20], batch_size=500):
         image_shape=(batch_size, 3, 32, 32),
         train_flag=train_flag
     )
+    params += layerx.params
+    param_count += 0
 
     layer0 = ConvLayer(
         rng,
@@ -88,17 +100,20 @@ def evaluate_lenet5(n_epochs=600, nkerns=[16, 20, 20], batch_size=500):
         image_shape=(batch_size, 3, 32, 32),
         filter_shape=(nkerns[0], 3, 5, 5),
         pad='same',
-        activation=relu
+        activation=relu,
+        init_W=load_weight[param_count],
+        init_b=load_weight[param_count+1]
     )
-
-    layers.append(layer0)
+    params += layer0.params
+    param_count += 2
 
     layer1 = PoolLayer(
         data=layer0.output,
         stride=(2, 2),
         poolsize=(2, 2)
     )
-    layers.append(layer1)
+    params += layer1.params
+    param_count += 0
 
     # Construct the second convolutional pooling layer
     # filtering reduces the image size to (12-5+1, 12-5+1) = (8, 8)
@@ -110,16 +125,20 @@ def evaluate_lenet5(n_epochs=600, nkerns=[16, 20, 20], batch_size=500):
         image_shape=(batch_size, nkerns[0], 16, 16),
         filter_shape=(nkerns[1], nkerns[0], 5, 5),
         pad='same',
-        activation=relu
+        activation=relu,
+        init_W=load_weight[param_count],
+        init_b=load_weight[param_count+1]
     )
-    layers.append(layer2)
+    params += layer2.params
+    param_count += 2
 
     layer3 = PoolLayer(
         data=layer2.output,
         poolsize=(2, 2),
         stride=(2, 2)
     )
-    layers.append(layer3)
+    params += layer3.params
+    param_count += 0
 
     # the HiddenLayer being fully-connected, it operates on 2D matrices of
     # shape (batch_size, num_pixels) (i.e matrix of rasterized images).
@@ -132,14 +151,18 @@ def evaluate_lenet5(n_epochs=600, nkerns=[16, 20, 20], batch_size=500):
         image_shape=(batch_size, nkerns[1], 8, 8),
         filter_shape=(nkerns[2], nkerns[1], 5, 5),
         pad='same',
-        activation=relu
+        activation=relu,
+        init_W=load_weight[param_count],
+        init_b=load_weight[param_count+1]
     )
-    layers.append(layer4)
+    params += layer4.params
+    param_count += 2
 
     layer5 = PoolLayer(
         data=layer4.output
     )
-    layers.append(layer5)
+    params += layer5.params
+    param_count += 0
 
     layer6_input = layer5.output.flatten(2)
 
@@ -151,10 +174,19 @@ def evaluate_lenet5(n_epochs=600, nkerns=[16, 20, 20], batch_size=500):
         p=.5,
         train_flag=train_flag
     )
+    params += layer5d.params
+    param_count += 0
 
     # classify the values of the fully-connected sigmoidal layer
-    layer6 = LogisticRegression(input=layer5d.output, n_in=nkerns[2] * 4 * 4, n_out=10)
-    layers.append(layer6)
+    layer6 = LogisticRegression(
+        input=layer5d.output,
+        n_in=nkerns[2] * 4 * 4,
+        n_out=10,
+        init_W=load_weight[param_count],
+        init_b=load_weight[param_count+1]
+    )
+    params += layer6.params
+    param_count += 2
 
     # the cost we minimize during training is the NLL of the model
     cost = layer6.negative_log_likelihood(y)
@@ -179,11 +211,6 @@ def evaluate_lenet5(n_epochs=600, nkerns=[16, 20, 20], batch_size=500):
             train_flag: numpy.cast['int8'](0)
         }
     )
-
-    # create a list of all model parameters to be fit by gradient descent
-    params = layer6.params + \
-        layer5.params + layer4.params + layer3.params + \
-        layer2.params + layer1.params + layer0.params
 
     # create a list of gradients for all model parameters
     grads = T.grad(cost, params)
@@ -219,7 +246,6 @@ def evaluate_lenet5(n_epochs=600, nkerns=[16, 20, 20], batch_size=500):
         updates=updates,
         givens={
             x: train_set_x[index * batch_size: (index + 1) * batch_size],
-            # TODO: prescale the data
             y: train_set_y[index * batch_size: (index + 1) * batch_size],
             train_flag: numpy.cast['int8'](1)
         }
@@ -245,12 +271,13 @@ def evaluate_lenet5(n_epochs=600, nkerns=[16, 20, 20], batch_size=500):
     best_validation_loss = numpy.inf
     best_iter = 0
     test_score = 0.
+    train_time = 0.
     start_time = timeit.default_timer()
 
     epoch = 0
     done_looping = False
 
-    if gpu_usage is True:
+    if 'gpu' in theano.config.device:
         nvmlInit()
         handle = nvmlDeviceGetHandleByIndex(0)
         info = nvmlDeviceGetMemoryInfo(handle)
@@ -258,15 +285,17 @@ def evaluate_lenet5(n_epochs=600, nkerns=[16, 20, 20], batch_size=500):
         print "Free memory:", info.free
 
     while (epoch < n_epochs) and (not done_looping):
-        epoch = epoch + 1
+        epoch += 1
+        train_start_time = timeit.default_timer()
+
+        if epoch == 2 or epoch == 11:
+            print ('     average trainning time per epoch = %.2fs' % (train_time / (epoch - 1)))
+
 
         for minibatch_index in xrange(n_train_batches):
-
             iter = (epoch - 1) * n_train_batches + minibatch_index
 
-            if iter % 100 == 0:
-                print 'training @ iter = ', iter
-            cost_ij = train_model(minibatch_index)
+            train_model(minibatch_index)
 
             if (iter + 1) % validation_frequency == 0:
 
@@ -274,9 +303,8 @@ def evaluate_lenet5(n_epochs=600, nkerns=[16, 20, 20], batch_size=500):
                 validation_losses = [validate_model(i) for i
                                      in xrange(n_valid_batches)]
                 this_validation_loss = numpy.mean(validation_losses)
-                print('epoch %i, minibatch %i/%i, validation error %f %%' %
-                      (epoch, minibatch_index + 1, n_train_batches,
-                       100. * this_validation_loss))
+
+                train_time += timeit.default_timer() - train_start_time
 
                 # if we got the best validation score until now
                 if this_validation_loss < best_validation_loss:
@@ -296,12 +324,20 @@ def evaluate_lenet5(n_epochs=600, nkerns=[16, 20, 20], batch_size=500):
                         for i in xrange(n_test_batches)
                     ]
                     test_score = numpy.mean(test_losses)
-                    print(('     epoch %i, minibatch %i/%i, test error of '
-                           'best model %f %%') %
-                          (epoch, minibatch_index + 1, n_train_batches,
+                    print(('epoch %3i, minibatch %i/%i, validation error %.2f%%, test error of '
+                           'best model %.2f%%') %
+                          (epoch, minibatch_index + 1, n_train_batches, 100. * this_validation_loss,
                            test_score * 100.))
-
-                    # TODO: after each better result, save it to a file and have the option to load
+                    if epoch >= min(60, n_epochs):
+                        print('     saving model...')
+                        param_values = [numpy.asarray(param.eval()) for param in params]  # otherwise CudaNdarray object
+                        f = open(os.path.join("model", save_weight), "wb")
+                        pickle.dump(param_values, f)
+                        f.close()
+                else:
+                    print('epoch %3i, minibatch %i/%i, validation error %.2f%%' %
+                          (epoch, minibatch_index + 1, n_train_batches,
+                           100. * this_validation_loss))
 
             if patience <= iter:
                 done_looping = True
@@ -315,6 +351,7 @@ def evaluate_lenet5(n_epochs=600, nkerns=[16, 20, 20], batch_size=500):
     print >> sys.stderr, ('The code for file ' +
                           os.path.split(__file__)[1] +
                           ' ran for %.2fm' % ((end_time - start_time) / 60.))
+
 
 if __name__ == '__main__':
     evaluate_lenet5()
