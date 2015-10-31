@@ -11,12 +11,12 @@ import timeit
 from theano.sandbox.rng_mrg import MRG_RandomStreams as RandomStreams
 
 from layers import *
-from load_cifar import load_data
+from load_new import load_data
 import cPickle as pickle
 
 
-def evaluate_lenet5(n_epochs=1, nkerns=[128, 128, 128], batch_size=100,
-                    n_params=6, load_weight="fresh_model.pickle", save_weight="fresh_model.pickle"):
+def evaluate_lenet5(n_epochs=800, nkerns=[128, 128, 128], batch_size=100,
+                    n_params=8, load_weight=None, save_weight="fresh_model.pickle"):
     """ Demonstrates lenet on MNIST dataset
 
     :type learning_rate: float
@@ -35,9 +35,9 @@ def evaluate_lenet5(n_epochs=1, nkerns=[128, 128, 128], batch_size=100,
 
     rng = numpy.random.RandomState(23455)
 
-    train_set_x, train_set_y = load_data(1)
-    valid_set_x, valid_set_y = load_data(5)
-    test_set_x, test_set_y = load_data(6)
+    train_set_x, train_set_y = load_data([1,2,3,4])
+    valid_set_x, valid_set_y = load_data([5])
+    test_set_x, test_set_y = load_data([6])
 
     # compute number of minibatches for training, validation and testing
     n_train_batches = train_set_x.get_value(borrow=True).shape[0]
@@ -291,6 +291,8 @@ def evaluate_lenet5(n_epochs=1, nkerns=[128, 128, 128], batch_size=100,
         if epoch == 2 or epoch == 11:
             print ('     average trainning time per epoch = %.2fs' % (train_time / (epoch - 1)))
 
+        if epoch % 50 == 0:
+            learning_rate *= .5
 
         for minibatch_index in xrange(n_train_batches):
             iter = (epoch - 1) * n_train_batches + minibatch_index
