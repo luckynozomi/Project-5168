@@ -15,22 +15,27 @@ from load_new import load_data
 import cPickle as pickle
 
 
-def evaluate_lenet5(n_epochs=800, nkerns=[128, 128, 128], batch_size=100,
+def evaluate_cifar10(n_epochs=800, nkerns=[128, 128, 128], batch_size=100,
                     n_params=8, load_weight=None, save_weight="fresh_model.pickle"):
-    """ Demonstrates lenet on MNIST dataset
-
-    :type learning_rate: float
-    :param learning_rate: learning rate used (factor for the stochastic
-                          gradient)
+    """ CNN on CIFAR-10 dataset
 
     :type n_epochs: int
     :param n_epochs: maximal number of epochs to run the optimizer
 
-    :type dataset: string
-    :param dataset: path to the dataset used for training /testing (MNIST here)
-
     :type nkerns: list of ints
     :param nkerns: number of kernels on each layer
+
+    :type batch_size: int
+    :param batch_size: size of a mini batch
+
+    :type n_params: int
+    :param n_params: number of parameters in the model
+
+    :type load_weight: string
+    :param load_weight: the name of the file from which to load the weights
+
+    :type save_weight: string
+    :param save_weight: the name of the file in which the weights are saved
     """
 
     rng = numpy.random.RandomState(23455)
@@ -75,15 +80,9 @@ def evaluate_lenet5(n_epochs=800, nkerns=[128, 128, 128], batch_size=100,
 
     param_count = 0
 
-    # Reshape matrix of rasterized images of shape (batch_size, 28 * 28)
-    # to a 4D tensor, compatible with our LeNetConvPoolLayer
-    # (28, 28) is the size of MNIST images.
-    layer0_input = x.reshape((batch_size, 3, 32, 32))
+    # Reshape matrix of rasterized images of shape (batch_size, 32 * 32) to a 4D tensor
 
-    # Construct the first convolutional pooling layer:
-    # filtering reduces the image size to (28-5+1 , 28-5+1) = (24, 24)
-    # maxpooling reduces this further to (24/2, 24/2) = (12, 12)
-    # 4D output tensor is thus of shape (batch_size, nkerns[0], 12, 12)
+    layer0_input = x.reshape((batch_size, 3, 32, 32))
 
     layerx = ElasticLayer(
         srng=srng,
@@ -115,10 +114,6 @@ def evaluate_lenet5(n_epochs=800, nkerns=[128, 128, 128], batch_size=100,
     params += layer1.params
     param_count += 0
 
-    # Construct the second convolutional pooling layer
-    # filtering reduces the image size to (12-5+1, 12-5+1) = (8, 8)
-    # maxpooling reduces this further to (8/2, 8/2) = (4, 4)
-    # 4D output tensor is thus of shape (batch_size, nkerns[1], 4, 4)
     layer2 = ConvLayer(
         rng,
         data=layer1.output,
@@ -139,11 +134,6 @@ def evaluate_lenet5(n_epochs=800, nkerns=[128, 128, 128], batch_size=100,
     )
     params += layer3.params
     param_count += 0
-
-    # the HiddenLayer being fully-connected, it operates on 2D matrices of
-    # shape (batch_size, num_pixels) (i.e matrix of rasterized images).
-    # This will generate a matrix of shape (batch_size, nkerns[1] * 4 * 4),
-    # or (500, 50 * 4 * 4) = (500, 800) with the default values.
 
     layer4 = ConvLayer(
         rng,
@@ -166,7 +156,6 @@ def evaluate_lenet5(n_epochs=800, nkerns=[128, 128, 128], batch_size=100,
 
     layer6_input = layer5.output.flatten(2)
 
-    # construct a fully-connected sigmoidal layer
     layer5d = DropoutLayer(
         data=layer6_input,
         n_in=nkerns[2] * 4 * 4,
@@ -177,7 +166,6 @@ def evaluate_lenet5(n_epochs=800, nkerns=[128, 128, 128], batch_size=100,
     params += layer5d.params
     param_count += 0
 
-    # classify the values of the fully-connected sigmoidal layer
     layer6 = LogisticRegression(
         input=layer5d.output,
         n_in=nkerns[2] * 4 * 4,
@@ -356,4 +344,4 @@ def evaluate_lenet5(n_epochs=800, nkerns=[128, 128, 128], batch_size=100,
 
 
 if __name__ == '__main__':
-    evaluate_lenet5()
+    evaluate_cifar10()
